@@ -8,7 +8,7 @@ import requests
 
 
 pair = "BNBBTC"
-limit = 2
+limit = 4
 
 n_truncate = {"BNBBTC":7,"BTCUSDT":2,"BNBUSDT":4}
 data = []

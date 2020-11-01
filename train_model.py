@@ -1,107 +1,125 @@
 #!/usr/bin/env python3
 
-from __future__ import print_function
-import os
-import neat
-import pickle
+import ssl
+import time
+import json
+import urllib
+import hmac, hashlib
+import requests
 
+from urllib.parse import urlparse, urlencode
+from urllib.request import Request, urlopen
 
-import pandas as pd
-import numpy as np
-from math import floor
+class Binance():
 
-
-def d_scale(data):
-    return (data - data.mean()) / (data.max() - data.min())
-
-
-def d_split(data, train_size):
-    train_data = data.iloc[0:floor(train_size * len(data))]
-    test_data = data.iloc[floor(train_size * len(data)):]
-
-    return train_data, test_data
-
-
-def d_strip(data):
-    if len(data) % 30 != 0:
-        n = len(data) + (30 - len(data) % 30)
-        n -= 30
-    else:
-        n = len(data) - 30
-    return data.iloc[:n + 1, :]
-
-
-train = test = data = x_train = y_train = x_test = y_test = None
-
-
-def eval_genomes(genomes, config):
-    for genome_id, genome in genomes:
-        cost = 0
-        net = neat.nn.FeedForwardNetwork.create(genome, config)
-        for index in range(len(y_train)):
-            predicted_output = net.activate(x_train[index])
-            cost += (predicted_output[0] - y_train[index]) ** 2
-        genome.fitness = -cost
-
-
-def run(config_file):
-
-    # Load configuration.
-    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                         config_file)
-
-
-    # Create the population, which is the top-level object for a NEAT run.
-    p = neat.Population(config)
-
-
-    p.add_reporter(neat.StdOutReporter(False))
-    stats = neat.StatisticsReporter()
-    p.add_reporter(stats)
-
-
-    # Run for up to 300 generations.
-    winner = p.run(eval_genomes, 300)
-
-    # Save model
-    with open(os.path.join(local_dir,'model-feedforward'),'wb') as f:
-        pickle.dump(winner,f)
-
-    # Display the winning genome.
-    print('\nBest genome:\n{!s}'.format(winner))
-
-    winner_net = neat.nn.FeedForwardNetwork.create(winner, config)
-
-
-    predicted = []
-    for xi, xo in zip(x_test, y_test):
-        output = winner_net.activate(xi)
-        predicted.append(output)    
+    methods = {
+            # public methods
+            'ping':             {'url':'api/v1/ping', 'method': 'GET', 'private': False},
+            'time':             {'url':'api/v1/time', 'method': 'GET', 'private': False},
+            'exchangeInfo':     {'url':'api/v1/exchangeInfo', 'method': 'GET', 'private': False},
+            'depth':            {'url': 'api/v1/depth', 'method': 'GET', 'private': False},
+            'trades':           {'url': 'api/v1/trades', 'method': 'GET', 'private': False},
+            'historicalTrades': {'url': 'api/v1/historicalTrades', 'method': 'GET', 'private': False},
+            'aggTrades':        {'url': 'api/v1/aggTrades', 'method': 'GET', 'private': False},
+            'klines':           {'url': 'api/v1/klines', 'method': 'GET', 'private': False},
+            'ticker24hr':       {'url': 'api/v1/ticker/24hr', 'method': 'GET', 'private': False},
+            'tickerPrice':      {'url': 'api/v3/ticker/price', 'method': 'GET', 'private': False},
+            'tickerBookTicker': {'url': 'api/v3/ticker/bookTicker', 'method': 'GET', 'private': False},
+            # private methods
+            'createOrder':      {'url': 'api/v3/order', 'method': 'POST', 'private': True},
+            'testOrder':        {'url': 'api/v3/order/test', 'method': 'POST', 'private': True},
+            'orderInfo':        {'url': 'api/v3/order', 'method': 'GET', 'private': True},
+            'cancelOrder':      {'url': 'api/v3/order', 'method': 'DELETE', 'private': True},
+            'openOrders':       {'url': 'api/v3/openOrders', 'method': 'GET', 'private': True},
+            'allOrders':        {'url': 'api/v3/allOrders', 'method': 'GET', 'private': True},
+            'account':          {'url': 'api/v3/account', 'method': 'GET', 'private': True},
+            'myTrades':         {'url': 'api/v3/myTrades', 'method': 'GET', 'private': True},
+            # wapi
+            'depositAddress':   {'url': 'wapi/v3/depositAddress.html', 'method':'GET', 'private':True},
+            'withdraw':   {'url': 'wapi/v3/withdraw.html', 'method':'POST', 'private':True},
+            'depositHistory': {'url': 'wapi/v3/depositHistory.html', 'method':'GET', 'private':True},
+            'withdrawHistory': {'url': 'wapi/v3/withdrawHistory.html', 'method':'GET', 'private':True},
+            'assetDetail': {'url': 'wapi/v3/assetDetail.html', 'method':'GET', 'private':True},
+            'tradeFee': {'url': 'wapi/v3/tradeFee.html', 'method':'GET', 'private':True},
+            'accountStatus': {'url': 'wapi/v3/accountStatus.html', 'method':'GET', 'private':True},
+            'systemStatus': {'url': 'wapi/v3/systemStatus.html', 'method':'GET', 'private':True},
+            'assetDust': {'url': 'sapi/v1/asset/dust', 'method':'POST', 'private':True},
+            'dustLog': {'url': 'wapi/v3/userAssetDribbletLog.html', 'method':'GET', 'private':True},
+            'assetAssetDividend': {'url': 'sapi/v1/asset/assetDividend', 'method':'GET', 'private':True},
+            #sapi
+            'marginTransfer': {'url': 'sapi/v1/margin/transfer', 'method': 'POST', 'private':True},
+            'marginLoan': {'url': 'sapi/v1/margin/loan', 'method': 'POST', 'private': True},
+            'marginLoanGet': {'url': 'sapi/v1/margin/loan', 'method': 'GET', 'private': True},
+            'marginRepay': {'url': 'sapi/v1/margin/repay', 'method': 'POST', 'private': True},
+            'marginRepayGet': {'url': 'sapi/v1/margin/repay', 'method': 'GET', 'private': True},
+            'marginCreateOrder': {'url': 'sapi/v1/margin/order', 'method': 'POST', 'private':True},
+            'marginCancelOrder': {'url': 'sapi/v1/margin/order', 'method': 'DELETE', 'private':True},
+            'marginOrderInfo': {'url': 'sapi/v1/margin/order', 'method': 'GET', 'private':True},
+            'marginAccount': {'url': 'sapi/v1/margin/account', 'method': 'POST', 'private':True},
+            'marginOpenOrders': {'url': 'sapi/v1/margin/openOrders', 'method': 'GET', 'private':True},
+            'marginAllOrders': {'url': 'sapi/v1/margin/allOrders', 'method': 'GET', 'private':True},
+            'marginAsset': {'url': 'sapi/v1/margin/asset', 'method': 'POST', 'private':True},
+            'marginPair': {'url': 'sapi/v1/margin/pair', 'method': 'POST', 'private':True},
+            'marginPriceIndex': {'url': 'sapi/v1/margin/priceIndex', 'method': 'POST', 'private':True},
+            'marginMyTrades': {'url': 'sapi/v1/margin/myTrades', 'method': 'GET', 'private':True},
+            'marginMaxBorrowable': {'url': 'sapi/v1/margin/maxBorrowable', 'method': 'GET', 'private':True},
+            'marginmaxTransferable': {'url': 'sapi/v1/margin/maxTransferable', 'method': 'GET', 'private':True},
+            #futures
+            'futuresExchangeInfo': {'url': 'fapi/v1/exchangeInfo', 'method': 'GET', 'private': False, 'futures': True},
+            'futuresKlines': {'url': 'fapi/v1/klines', 'method': 'GET', 'private': False, 'futures': True},
+            'futuresCreateOrder':      {'url': 'fapi/v1/order', 'method': 'POST', 'private': True, 'futures': True},
+            'futuresAccount':      {'url': 'fapi/v1/account', 'method': 'POST', 'private': True, 'futures': True},
+            'futuresBalance':      {'url': 'fapi/v1/balance', 'method': 'GET', 'private': True, 'futures': True},
+            'futuresSymbolPriceTicker': {'url': 'fapi/v1/ticker/price', 'method': 'GET', 'private': True, 'futures': True},
+            'futuresOrderInfo': {'url': 'fapi/v1/order', 'method': 'GET', 'private': True, 'futures': True},
+            'futuresCancelOrder':      {'url': 'fapi/v1/order', 'method': 'DELETE', 'private': True, 'futures': True},
+   }
     
+    def __init__(self, API_KEY, API_SECRET):
+        self.API_KEY = API_KEY
+        self.API_SECRET = bytearray(API_SECRET, encoding='utf-8')
+        self.shift_seconds = 0
 
+    def __getattr__(self, name):
+        def wrapper(*args, **kwargs):
+            kwargs.update(command=name)
+            return self.call_api(**kwargs)
+        return wrapper
 
-################################################################################
+    def set_shift_seconds(self, seconds):
+        self.shift_seconds = seconds
+        
+    def call_api(self, **kwargs):
 
- 
-if __name__ == '__main__':
+        command = kwargs.pop('command')
 
-    local_dir = os.path.dirname(__file__)
-    config_path = os.path.join(local_dir, 'config-feedforward')
-    data = pd.read_csv(os.path.join(local_dir,'ALTBTC.csv'))
+        base_url ='https://api.binance.com/' 
+        if self.methods[command].get('futures'):
+            base_url = 'https://fapi.binance.com/' 
+        api_url = base_url  + self.methods[command]['url']
 
+        payload = kwargs
+        headers = {}
+        
+        payload_str = urllib.parse.urlencode(payload)
+        if self.methods[command]['private']:
+            payload.update({'timestamp': int(time.time() + self.shift_seconds - 1) * 1000})
+            payload_str = urllib.parse.urlencode(payload).encode('utf-8')
+            sign = hmac.new(
+                key=self.API_SECRET,
+                msg=payload_str,
+                digestmod=hashlib.sha256
+            ).hexdigest()
 
-    # Preprocess data
-    data = d_scale(data)  # scale
-    train, test = d_split(data, train_size=.9)  # split into training and testing data
-    train = d_strip(train)
-    test = d_strip(test)
+            payload_str = payload_str.decode("utf-8") + "&signature="+str(sign) 
+            headers = {"X-MBX-APIKEY": self.API_KEY, "Content-Type":"application/x-www-form-urlencoded"}
 
-    x_train = [[train.iloc[i]['Close'] for i in range(index, index + 30)] for index in range(0, len(train) - 30)]
-    y_train = [train.iloc[i]['Close'] for i in range(30, len(train))]
-    x_test = [[test.iloc[i]['Close'] for i in range(index, index + 30)] for index in range(0, len(test) - 30)]
-    y_test = [test.iloc[i]['Close'] for i in range(30, len(test))]
-   
-    run(config_path)
+        if self.methods[command]['method'] == 'GET' or self.methods[command]['url'].startswith('sapi'):
+            api_url += '?' + payload_str
 
+        response = requests.request(method=self.methods[command]['method'], url=api_url, data="" if self.methods[command]['method'] == 'GET' else payload_str, headers=headers)
+            
+        if 'code' in response.text:
+            raise Exception(response.text)
 
+        return response.json()

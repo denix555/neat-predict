@@ -6,7 +6,7 @@ import sys
 import time
 import requests
 
-from binance_api import Binance
+from train_model import Binance
 
 
 API_KEY = 'InFZ6prqSd7IsMkl4ZcfRzG3vagRCGC0N00CRCtLsFykqZGnyPWxMjv6lNPKL2rS'

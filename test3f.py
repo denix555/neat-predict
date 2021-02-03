@@ -10,7 +10,7 @@ import requests
 
 pair = 'LTCUSDT'
 interval = '5m'
-limit = 40
+limit = '40'
 
 filename = 'log_test3f.txt'
 os.system("cat /dev/null > log_test3f.txt")

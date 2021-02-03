@@ -369,7 +369,7 @@ def run():
                 action = True
 
             elif comp(ms[g[12][0]],g[12][1],g[12][2],d) and \
-                 comp(ms[g][13][0]],g[13][1],g[13][2],d) and \
+                 comp(ms[g[13][0]],g[13][1],g[13][2],d) and \
                  comp(ms[g[14][0]],g[14][1],g[14][2],d) and \
                  comp(ms[g[15][0]],g[15][1],g[15][2],d):
 
